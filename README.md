@@ -9,7 +9,7 @@
 
 `gcc -W -Wall -O2 -fno-strict-aliasing blowfish.c md5.c telnetenable.c -o telnetenable2`
 
-`gcc -W -Wall -O2 -fno-strict-aliasing blowfish.c md5.c telnetenable.c -o telnetenable2 -lws2_32`
+`gcc -W -Wall -O2 -fno-strict-aliasing blowfish.c md5.c telnetenable-win.c -o telnetenable2 -lws2_32`
 
 **Usage:**
 
