@@ -76,4 +76,150 @@ void usage(char * progname)
   exit(-1);
 }
 
-// int socket_connect(char *host, in_port_t 
+// int socket_connect(char *host, in_port_t port){
+//   struct hostent *hp;
+//   struct sockaddr_in addr;
+//   int on = 1, sock;
+// 
+//   if((hp = gethostbyname(host)) == NULL){
+//     herror("gethostbyname");
+//     exit(1);
+//   }
+//   bcopy(hp->h_addr, &addr.sin_addr, hp->h_length);
+//   addr.sin_port = htons(port);
+//   addr.sin_family = AF_INET;
+//   sock = socket(AF_INET, SOCK_DGRAM, 0);
+//   setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&on, sizeof(int));
+//   if(sock == -1){
+//     perror("setsockopt");
+//     exit(1);
+//   }
+//   if(connect(sock, (struct sockaddr *)&addr, sizeof(struct sockaddr_in)) == -1){
+//     perror("connect");
+//     exit(1);
+//   }
+//   return sock;
+// }
+
+int GetOutputLength(unsigned long lInputLong)
+{
+  unsigned long lVal = lInputLong % 8;
+
+  if (lVal!=0)
+    return lInputLong+8-lVal;
+  else
+    return lInputLong;
+}
+
+int EncodeString(BLOWFISH_CTX *ctx,char *pInput,char *pOutput, int lSize)
+{
+  int SameDest = 0;
+  int lCount;
+  int lOutSize;
+  int i=0;
+
+  lOutSize = GetOutputLength(lSize);
+  lCount=0;
+  while (lCount<lOutSize)
+    {
+      char *pi=pInput;
+      char *po=pOutput;
+      for (i=0;i<8;i++)
+        *po++=*pi++;
+      Blowfish_Encrypt(ctx,(uint32_t *)pOutput,(uint32_t *)(pOutput+4));
+      pInput+=8;
+      pOutput+=8;
+      lCount+=8;
+    }
+
+  return lCount;
+}
+
+
+int fill_payload(int argc, char * input[])
+{
+  MD5_CTX MD;
+  char MD5_key[0x10];
+  char secret_key[0x400]="AMBIT_TELNET_ENABLE+";
+  int encoded_len;
+
+  memset(&payload, 0, sizeof(payload));
+  // NOTE: struct has .mac behind .signature and is filled here
+  strcpy(payload.mac, input[2]);
+  strcpy(payload.username, input[3]);
+
+  if (argc==5)
+    strcpy(payload.password, input[4]);
+
+
+  MD5Init(&MD);
+  MD5Update(&MD,payload.mac,0x70);
+  MD5Final(MD5_key,&MD);
+
+  strncpy(payload.signature, MD5_key, sizeof(payload.signature));
+  // NOTE: so why concatenate outside of the .signature boundary again
+  //       using strcat? deleting this line would keep the payload the same and not
+  //       cause some funky abort() or segmentation fault on newer gcc's
+  // dj: this was attempting to put back the first byte of the MAC address
+  // dj: which was getting stomped by the strcpy of the MD5_key above
+  // dj: a better fix is to use strncpy to avoid the stomping in the 1st place
+  //  strcat(payload.signature, input[2]);
+
+  if (argc==5)
+    strncat(secret_key,input[4],sizeof(secret_key) - strlen(secret_key) - 1);
+
+  Blowfish_Init(&ctx,secret_key,strlen(secret_key));
+
+  encoded_len = EncodeString(&ctx,(char*)&payload,(char*)&output_buf,0x80);
+
+  return encoded_len;
+}
+
+int PORT = 23;
+
+int main(int argc, char * argv[])
+{
+
+  int datasize;
+  int i;
+  int sock;
+  struct sockaddr_in si_other;
+  WSADATA wsa;
+  
+  if (argc!=5)
+    usage(argv[0]);
+
+  datasize = fill_payload(argc, argv);
+
+//   int sock = socket_connect(argv[1],PORT);
+//   write(sock, output_buf, datasize);
+//   close(sock);
+  
+  if (WSAStartup(MAKEWORD(2,2),&wsa) != 0)
+  {
+      printf("Failed. Error Code : %d",WSAGetLastError());
+      exit(EXIT_FAILURE);
+  }
+  
+  if ( (sock=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == SOCKET_ERROR)
+  {
+      printf("socket() failed with error code : %d" , WSAGetLastError());
+      exit(EXIT_FAILURE);
+  }
+  
+  memset((char *) &si_other, 0, sizeof(si_other));
+  si_other.sin_family = AF_INET;
+  si_other.sin_port = htons(PORT);
+  si_other.sin_addr.S_un.S_addr = inet_addr(argv[1]);
+
+  if (sendto(sock, output_buf, datasize , 0 , (struct sockaddr *) &si_other, sizeof(si_other)) == SOCKET_ERROR)
+  {
+      printf("sendto() failed with error code : %d" , WSAGetLastError());
+      exit(EXIT_FAILURE);
+  }
+
+  printf("\nPayload has been sent to Netgear router.\n");
+  printf("Telnet should be enabled.\n\n");
+
+  return 0;
+}
