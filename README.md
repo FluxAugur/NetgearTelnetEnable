@@ -2,8 +2,8 @@
 
 **NetgearTelnetEnable is a tool for enables telnet access on certain Netgear devices**
 
-This code was test OK on Windows7.
-
+- This code was test pass on Windows7
+- It may be use on Linux
 
 **Compile:**
 
@@ -15,10 +15,12 @@ This code was test OK on Windows7.
 
 `telnetenable2.exe <IP> <MAC> <user> <pass>`
 
+```
               IP - the IP of the LAN of the router
              MAC - the MAC address of the LAN of the router
             user - usually admin
         password - the admin password (the one used to login into the WEB configuration pages)
+```
 
 **Example:**
 
