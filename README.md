@@ -1,4 +1,4 @@
-#NetgearTelnetEnable
+NetgearTelnetEnable
 
 **NetgearTelnetEnable is a tool for enables telnet access on certain Netgear devices**
 
