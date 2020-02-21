@@ -17,7 +17,7 @@
 
 ```
               IP - the IP of the LAN of the router
-             MAC - the MAC address of the LAN of the router
+             MAC - the MAC address of the LAN of the router(Lowercase to uppercase)
             user - usually admin
         password - the admin password (the one used to login into the WEB configuration pages)
 ```
