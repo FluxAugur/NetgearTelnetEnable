@@ -3,8 +3,19 @@ NetgearTelnetEnable
 
 Enables telnet access on certain Netgear devices
 
-This code did not quite work for me on OS X, but it was OK on Debian:
+This code was test OK on Windows7.
 
-http://www.seattlewireless.net/telnetenable.c
 
-I've made changes so it works on OS X 10.7.4.  I've also added some comments to clarify what was wrong.
+Compile:
+gcc -W -Wall -O2 -fno-strict-aliasing blowfish.c md5.c telnetenable.c -o telnetenable2
+gcc -W -Wall -O2 -fno-strict-aliasing blowfish.c md5.c telnetenable.c -o telnetenable2 -lws2_32
+
+Usage: telnetenable2.exe <IP> <MAC> <user> <pass>
+
+              IP - the IP of the LAN of the router
+             MAC - the MAC address of the LAN of the router
+            user - usually admin
+        password - the admin password (the one used to login into the WEB configuration pages)
+
+Example:
+telnetenable2.exe 192.168.1.1 010203040506 admin password
