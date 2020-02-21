@@ -75,9 +75,9 @@ static void usage(void)
 "\n"
 "Example:\n"
 #ifdef _WIN32
-"telnetenable2.exe 192.168.0.1 010203040506 admin password\n"
+"telnetenable2.exe 192.168.1.1 12345678EEFF admin password\n"
 #else
-"./telnetenable2 192.168.0.1 010203040506 admin password\n"
+"./telnetenable2 192.168.1.1 12345678EEFF admin password\n"
 #endif
 "\n");
 
