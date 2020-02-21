@@ -24,4 +24,4 @@
 
 **Example:**
 
-`telnetenable2.exe 192.168.1.1 010203040506 admin password`
+`telnetenable2.exe 192.168.1.1 12345678EEFF admin password`
