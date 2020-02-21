@@ -1,190 +1,257 @@
 /*
-  This program is a re-implementation of the telnet console enabler utility
-  for use with Netgear wireless routers.
-
-  The original Netgear Windows binary version of this tool is available here:
-  http://www.netgear.co.kr/Support/Product/FileInfo.asp?IDXNo=155
-
-  Per DMCA 17 U.S.C. §1201(f)(1)-(2), the original Netgear executable was
-  reverse engineered to enable interoperability with other operating systems
-  not supported by the original windows-only tool (MacOS, Linux, etc).
-
-        Netgear Router - Console Telnet Enable Utility
-        Release 0.1 : 25th June 2006
-        Copyright (C) 2006, yoshac @ member.fsf.org
-        Release 0.2 : 20th August 2012
-        dj bug fix on OS X
-        Release 0.3 : 8th October 2012
-        keithr-git bug fix to send entire packet in one write() call,
-          strcpy->strncpy, clean up some whitespace
-
-        This program is free software; you can redistribute it and/or modify
-        it under the terms of the GNU General Public License as published by
-        the Free Software Foundation; either version 2 of the License, or
-        (at your option) any later version.
-
-        This program is distributed in the hope that it will be useful,
-        but WITHOUT ANY WARRANTY; without even the implied warranty of
-        MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-        GNU General Public License for more details.
-
-        You should have received a copy of the GNU General Public License along
-        with this program; if not, write to the Free Software Foundation, Inc.,
-        51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-
-
-  The RSA MD5 and Blowfish implementations are provided under LGPL from
-  http://www.opentom.org/Mkttimage
+gcc -W -Wall -O2 -fno-strict-aliasing blowfish.c md5.c te2.c -o telnetenable2
+gcc -W -Wall -O2 -fno-strict-aliasing blowfish.c md5.c te2.c -o telnetenable2 -lws2_32
 */
 
+/*******************************************************************/
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <Ws2tcpip.h>
+#else
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netdb.h>
+#include <errno.h>
+#endif
 
-#include <stdlib.h>
 #include <stdio.h>
-//#include <process.h>
 #include <string.h>
-
+#include <stdlib.h>
+#include <unistd.h>
 #include "md5.h"
 #include "blowfish.h"
 
-static char output_buf[0x640];
+#ifdef _WIN32
+#define LASTERRNO WSAGetLastError()
+WSADATA wsaData;
+#else
+#define LASTERRNO errno
+#define closesocket close
+#define INVALID_SOCKET -1
+#define SOCKET_ERROR -1
 
+typedef int SOCKET;
+typedef struct sockaddr SOCKADDR;
+#endif
+
+struct payload
+{
+	char signature[0x10];
+	char mac[0x10];
+	char username[0x10];
+	char password[0x10];
+	char reserved[0x40];
+};
+
+SOCKET sock = INVALID_SOCKET;;
 static BLOWFISH_CTX ctx;
 
-struct PAYLOAD
-{
-  char signature[0x10];
-  char mac[0x10];
-  char username[0x10];
-  char password[0x10];
-  char reserved[0x40];
-} payload;
+char pkt[0x640];
+int pktLen;
 
-void usage(char * progname)
+/*******************************************************************/
+
+static void usage(void)
 {
-  printf("\nVersion:0.3, 2012/10/08\n");
-  printf("Usage:\n%s <host ip> <host mac> <user name> <password>\n\n",progname);
-  exit(-1);
+	fprintf(stderr,""
+"telnetenable2 (0.0.4) - enable telnet in the new Netgear firmwares.\n"
+"Written by alfie, with some code from\n"
+"https://github.com/davejagoda/NetgearTelnetEnable\n"
+"Released under the terms of the GPL2.\n"
+"\n"
+#ifdef _WIN32
+"Usage: telnetenable2.exe <IP> <MAC> <user> <pass>\n"
+#else
+"Usage: telnetenable2 <IP> <MAC> <user> <pass>\n"
+#endif
+"\n"
+"\t      IP - the IP of the LAN of the router\n"
+"\t     MAC - the MAC address of the LAN of the router\n"
+"\t    user - usually admin\n"
+"\tpassword - the admin password (the one used to login into the WEB configuration pages)\n"
+"\n"
+"Example:\n"
+#ifdef _WIN32
+"telnetenable2.exe 192.168.0.1 010203040506 admin password\n"
+#else
+"./telnetenable2 192.168.0.1 010203040506 admin password\n"
+#endif
+"\n");
+
+	exit(1);
 }
 
-int socket_connect(char *host, in_port_t port){
-  struct hostent *hp;
-  struct sockaddr_in addr;
-  int on = 1, sock;
+/*******************************************************************/
 
-  if((hp = gethostbyname(host)) == NULL){
-    herror("gethostbyname");
-    exit(1);
-  }
-  bcopy(hp->h_addr, &addr.sin_addr, hp->h_length);
-  addr.sin_port = htons(port);
-  addr.sin_family = AF_INET;
-  sock = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
-  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&on, sizeof(int));
-  if(sock == -1){
-    perror("setsockopt");
-    exit(1);
-  }
-  if(connect(sock, (struct sockaddr *)&addr, sizeof(struct sockaddr_in)) == -1){
-    perror("connect");
-    exit(1);
-  }
-  return sock;
+static int startAll(void)
+{
+#ifdef _WIN32
+	int res;
+	
+    res = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (res!=NO_ERROR) {
+        fprintf(stderr,"WSAStartup failed with error: %d\n", res);
+		return 1;
+	}
+#endif
+
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (sock==INVALID_SOCKET) {
+        fprintf(stderr,"socket failed with error: %d\n", LASTERRNO);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+		return 1;
+	}
+
+	return 0;
 }
 
-int GetOutputLength(unsigned long lInputLong)
-{
-  unsigned long lVal = lInputLong % 8;
+/*******************************************************************/
 
-  if (lVal!=0)
-    return lInputLong+8-lVal;
-  else
-    return lInputLong;
+static void closeAll(void)
+{
+	closesocket(sock);
+#ifdef _WIN32
+	WSACleanup();
+#endif
 }
 
-int EncodeString(BLOWFISH_CTX *ctx,char *pInput,char *pOutput, int lSize)
-{
-  int SameDest = 0;
-  int lCount;
-  int lOutSize;
-  int i=0;
+/*******************************************************************/
 
-  lOutSize = GetOutputLength(lSize);
-  lCount=0;
-  while (lCount<lOutSize)
-    {
-      char *pi=pInput;
-      char *po=pOutput;
-      for (i=0;i<8;i++)
-        *po++=*pi++;
-      Blowfish_Encrypt(ctx,(uint32_t *)pOutput,(uint32_t *)(pOutput+4));
-      pInput+=8;
-      pOutput+=8;
-      lCount+=8;
+static int getOutputLength(unsigned long lInputLong)
+{
+	unsigned long lVal = lInputLong % 8;
+
+	if (lVal!=0) return lInputLong+8-lVal;
+	else return lInputLong;
+}
+
+/*******************************************************************/
+
+static int encodeString(BLOWFISH_CTX *ctx,char *pInput,char *pOutput, int lSize)
+{
+	int lCount, lOutSize, i = 0;
+
+	lOutSize = getOutputLength(lSize);
+	lCount = 0;
+	while (lCount<lOutSize) {
+		char *pi=pInput;
+		char *po=pOutput;
+		for (i = 0; i<8; i++) *po++=*pi++;
+		Blowfish_Encrypt(ctx,(uint32_t *)pOutput,(uint32_t *)(pOutput+4));
+		pInput += 8;
+		pOutput += 8;
+		lCount += 8;
     }
 
-  return lCount;
+	return lCount;
 }
 
+/*******************************************************************/
 
-int fill_payload(int argc, char * input[])
+static int createPkt(char *mac,char *user,char *pass)
 {
-  MD5_CTX MD;
-  char MD5_key[0x10];
-  char secret_key[0x400]="AMBIT_TELNET_ENABLE+";
-  int encoded_len;
+	MD5_CTX MD;
+	char MD5_key[0x10], secret_key[0x400]="AMBIT_TELNET_ENABLE+";
+	struct payload pl;
 
-  memset(&payload, 0, sizeof(payload));
-  // NOTE: struct has .mac behind .signature and is filled here
-  strcpy(payload.mac, input[2]);
-  strcpy(payload.username, input[3]);
+	memset(&pl,0,sizeof(pl));
+	strcpy(pl.mac,mac);
+	strcpy(pl.username,user);
+	strcpy(pl.password,pass);
 
-  if (argc==5)
-    strcpy(payload.password, input[4]);
+	MD5Init(&MD);
+	MD5Update(&MD,(const unsigned char *)pl.mac,0x70);
+	MD5Final((unsigned char *)MD5_key,&MD);
 
+	strncpy(pl.signature,MD5_key,sizeof(pl.signature));
+    strncat(secret_key,pass,sizeof(secret_key)-strlen(secret_key) - 1);
+	Blowfish_Init(&ctx,(unsigned char *)secret_key,strlen(secret_key));
+	pktLen = encodeString(&ctx,(char *)&pl,(char *)&pkt,0x80);
 
-  MD5Init(&MD);
-  MD5Update(&MD,payload.mac,0x70);
-  MD5Final(MD5_key,&MD);
-
-  strncpy(payload.signature, MD5_key, sizeof(payload.signature));
-  // NOTE: so why concatenate outside of the .signature boundary again
-  //       using strcat? deleting this line would keep the payload the same and not
-  //       cause some funky abort() or segmentation fault on newer gcc's
-  // dj: this was attempting to put back the first byte of the MAC address
-  // dj: which was getting stomped by the strcpy of the MD5_key above
-  // dj: a better fix is to use strncpy to avoid the stomping in the 1st place
-  //  strcat(payload.signature, input[2]);
-
-  if (argc==5)
-    strncat(secret_key,input[4],sizeof(secret_key) - strlen(secret_key) - 1);
-
-  Blowfish_Init(&ctx,secret_key,strlen(secret_key));
-
-  encoded_len = EncodeString(&ctx,(char*)&payload,(char*)&output_buf,0x80);
-
-  return encoded_len;
+	return 0;
 }
 
-int PORT = 23;
+/*******************************************************************/
 
-int main(int argc, char * argv[])
+#define PORT 23
+
+static int sendPkt(char *host)
 {
+    struct sockaddr_in sin;
+	int res;
 
-  int datasize;
-  int i;
+	sin.sin_family = AF_INET;
+    sin.sin_port = htons(PORT);
+    sin.sin_addr.s_addr = inet_addr(host);
 
-  if (argc!=5)
-    usage(argv[0]);
+	if (sin.sin_addr.s_addr==INADDR_NONE) {
+        fprintf(stderr,"invalid IP address %s\n",host);
+		return 1;
+	}
+			
+    res = sendto(sock,(char *)pkt,pktLen,0,(SOCKADDR *)&sin,sizeof(sin));
+    if (res==SOCKET_ERROR) {
+        fprintf(stderr,"sendto failed with error: %d\n", LASTERRNO);
+		return 1;
+    }
 
-  datasize = fill_payload(argc, argv);
-
-  int sock = socket_connect(argv[1],PORT);
-  write(sock, output_buf, datasize);
-  close(sock);
-
-  return 0;
+	return 0;
 }
+
+/*******************************************************************/
+
+int main(int argc, char *argv[])
+{
+	int res = 1;
+	
+	if (argc!=5) {
+		usage();
+		return 1;
+	}
+	
+	if (strlen(argv[2])>0x10-1) {
+		fprintf(stderr,"MAC address too long\n");
+		return 1;
+	}
+	
+	if (strchr(argv[2],':')!=NULL) {
+		fprintf(stderr,"MAC address must have no ':'\n");
+		return 1;
+	}
+	
+	if (strlen(argv[3])>0x10-1) {
+		fprintf(stderr,"username too long\n");
+		return 1;
+	}
+	
+	if (strlen(argv[4])>0x10-1) {
+		fprintf(stderr,"password too long\n");
+		return 1;
+	}
+
+	printf("starting...\n");
+	if (startAll()==0) {
+
+		printf("creating pkt...\n");
+		if (createPkt(argv[2],argv[3],argv[4])==0) {
+
+			printf("sending pkt...\n");
+			if (sendPkt(argv[1])==0) {
+
+				printf("done.\n");
+				res = 0;
+			}
+		}
+		
+		closeAll();
+	}
+	
+	return res;
+}
+
+/*******************************************************************/
